@@ -73,7 +73,7 @@ function xtime_recursive(x::Uint8, i::Integer)
   x
 end
 
-@inline function gf_mult(x::Uint8, y::Uint8)
+@inline function _gf_mult(x::Uint8, y::Uint8)
   s::Uint8 = 0x0
   if x >= y
   while y > 0
@@ -90,6 +90,10 @@ end
   end
   s
 end
+
+# Comment this out and rename _gf_mult to gf_mult to avoid table lookup
+const gf_mult_lookup = [_gf_mult(x, y) for x = 0x00:0xff, y = 0x00:0xff]
+gf_mult(x::Uint8, y::Uint8) = gf_mult_lookup[x+1, y+1]
 
 function mult_poly(x::Unsigned, y::Unsigned)
   shifts = Array(Any, 0)
