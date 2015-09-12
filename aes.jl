@@ -1,11 +1,11 @@
-immutable AES_cipher_params
-  bits::Unsigned # Cipher key length, bits
-  nk::Unsigned # Number of 32-bit words, cipher key
-  nb::Unsigned # Number of columns in State
-  nr::Unsigned # Number of rounds
-  block_size::Unsigned # byte length
-  block_x::Unsigned # block dimensions X
-  block_y::Unsigned # block dimensions Y
+immutable AES_cipher_params{T<:Unsigned}
+  bits::T # Cipher key length, bits
+  nk::T # Number of 32-bit words, cipher key
+  nb::T # Number of columns in State
+  nr::T # Number of rounds
+  block_size::T # byte length
+  block_x::T # block dimensions X
+  block_y::T # block dimensions Y
 end
 
 function aes_get_cipher_params(key::Vector{Uint8})
@@ -40,8 +40,8 @@ function polynomial_degree(p::Uint16)
 end
 
 function gf_div(x::Unsigned, d::Unsigned)
-  r = uint16(x)
-  d = uint16(d)
+  r = UInt16(x)
+  d = UInt16(d)
   q::Uint16 = 0x0
   r_deg = polynomial_degree(r)
   d_deg = polynomial_degree(d)
@@ -49,7 +49,7 @@ function gf_div(x::Unsigned, d::Unsigned)
 
   while r_deg >= d_deg
     shift = r_deg - d_deg
-    q |= uint16(0x1) << shift
+    q |= UInt16(0x1) << shift
     r = r $ (d << (shift))
     r_deg = polynomial_degree(r)
   end
@@ -62,10 +62,7 @@ function gf_modulo(x::Unsigned)
 end
 
 function xtime(x::Uint8)
-  if x & 0x80 == 0x80
-    return (x << 1) $ 0x1b
-  end
-  x << 1
+  (x << 1) $ (0x1b * (x & 0x80 == 0x80))
 end
 
 function xtime_recursive(x::Uint8, i::Integer)
@@ -76,21 +73,17 @@ function xtime_recursive(x::Uint8, i::Integer)
   x
 end
 
-function gf_mult(x::Uint8, y::Uint8)
+@inline function gf_mult(x::Uint8, y::Uint8)
   s::Uint8 = 0x0
   if x >= y
   while y > 0
-    if y % 2 == 1
-      s $= x
-    end
+    s = ifelse(y % 2 == 1, s $ x, s)
     y >>>= 1
     x = xtime(x)
     end
   else
     while x > 0
-    if x % 2 == 1
-      s $= y
-    end
+    s = ifelse(x % 2 == 1, s $ y, s)
     x >>>= 1
     y = xtime(y)
     end
@@ -98,19 +91,17 @@ function gf_mult(x::Uint8, y::Uint8)
   s
 end
 
-@vectorize_2arg Uint8 gf_mult
-
 function mult_poly(x::Unsigned, y::Unsigned)
   shifts = Array(Any, 0)
   p::Uint64 = 0
-  for i = 0:polynomial_degree(uint16(y))
+  for i = 0:polynomial_degree(UInt16(y))
     if y & (1 << i) != 0
       push!(shifts, i)
     end
   end
 
   for i = 1:length(shifts)
-    p $= uint64(x) << shifts[i]
+    p $= UInt64(x) << shifts[i]
   end
   p
 end
@@ -204,8 +195,8 @@ const s_box_inv = gen_s_box_inv()
 
 function sub_bytes!(state::Array{Uint8})
   for i = 1:4
-    for j = 1:4
-      state[i, j] = s_box[1+state[i, j]]
+    @simd for j = 1:4
+      @inbounds state[i, j] = s_box[1+state[i, j]]
     end
   end
 end
@@ -219,12 +210,13 @@ function sub_bytes_inv!(state::Array{Uint8})
 end
 
 function shift_rows!(state::Array{Uint8})
-  row = Array(Uint8, 4)
   for i = 2:4
-    for j in 0:3
-      row[j+1] = state[i, mod1(j+i, 4)]
-    end
-    state[i, :] = row
+    @inbounds (state[i, 1], state[i, 2], state[i, 3], state[i, 4]) = (
+      state[i, mod1(i, 4)],
+      state[i, mod1(i+1, 4)],
+      state[i, mod1(i+2, 4)],
+      state[i, mod1(i+3, 4)]
+    )
   end
 end
 
@@ -239,13 +231,13 @@ function shift_rows_inv!(state::Array{Uint8})
 end
 
 function mix_columns!(state::Array{Uint8})
-  temp::Array{Uint8, 2} = Array(Uint8, 4, 1)
-  @simd for j = 1:4
-    temp[1,1] = gf_mult(0x02, state[1,j]) $ gf_mult(0x03, state[2,j]) $ state[3,j] $ state[4,j]
-    temp[2,1] = state[1,j] $ gf_mult(0x02, state[2,j]) $ gf_mult(0x03, state[3,j]) $ state[4,j]
-    temp[3,1] = state[1,j] $ state[2,j] $ gf_mult(0x02, state[3,j]) $ gf_mult(0x03, state[4,j])
-    temp[4,1] = gf_mult(0x03, state[1,j]) $ state[2,j] $ state[3,j] $ gf_mult(0x02, state[4,j])
-    state[:,j] = temp
+  for j = 1:4
+    @inbounds (state[1,j], state[2,j], state[3,j], state[4, j]) = (
+      gf_mult(0x02, state[1,j]) $ gf_mult(0x03, state[2,j]) $ state[3,j] $ state[4,j],
+      state[1,j] $ gf_mult(0x02, state[2,j]) $ gf_mult(0x03, state[3,j]) $ state[4,j],
+      state[1,j] $ state[2,j] $ gf_mult(0x02, state[3,j]) $ gf_mult(0x03, state[4,j]),
+      gf_mult(0x03, state[1,j]) $ state[2,j] $ state[3,j] $ gf_mult(0x02, state[4,j])
+    )
   end
 end
 
@@ -275,10 +267,10 @@ function mult_words(A::Vector{Uint8}, B::Vector{Uint8})
   return d
 end
 
-function add_round_key!(state::Array{Uint8}, words::Array{Uint8})
+function add_round_key!(state::Array{Uint8}, words::Array{Uint8}, blk::Integer)
   for j = 1:4
     @simd for i = 1:4
-      state[i,j] $= words[i,j]
+      @inbounds state[i,j] $= words[i,j,blk]
     end
   end
 end
@@ -315,7 +307,7 @@ function gen_key_schedule(key::Vector{Uint8}, params::AES_cipher_params)
     if i % params.nk == 0
       rot_word!(key_)
       sub_word!(key_)
-      rcon_xor!(key_, uint8(i / params.nk))
+      rcon_xor!(key_, UInt8(i / params.nk))
     elseif (params.bits == 256) && (i % params.nk == 4)
       sub_word!(key_)
     end
@@ -326,38 +318,38 @@ function gen_key_schedule(key::Vector{Uint8}, params::AES_cipher_params)
 end
 
 function rijndael(state::Array{Uint8}, key_block::Array{Uint8}, params::AES_cipher_params)
-  add_round_key!(state, key_block[:,:,1])
+  add_round_key!(state, key_block, 1)
 
   i = 2
   while i <= params.nr
     sub_bytes!(state)
     shift_rows!(state)
     mix_columns!(state)
-    add_round_key!(state, key_block[:,:,i])
+    add_round_key!(state, key_block, i)
     i += 1
   end
 
   sub_bytes!(state)
   shift_rows!(state)
-  add_round_key!(state, key_block[:,:,i])
+  add_round_key!(state, key_block, i)
   state
 end
 
 function rijndael_inverse(state::Array{Uint8}, key_block::Array{Uint8}, params::AES_cipher_params)
   i = params.nr + 1
-  add_round_key!(state, key_block[:,:,i])
+  add_round_key!(state, key_block, i)
 
   while i > 2
     i -= 1
     shift_rows_inv!(state)
     sub_bytes_inv!(state)
-    add_round_key!(state, key_block[:,:,i])
+    add_round_key!(state, key_block, i)
     mix_columns_inv!(state)
   end
   i -= 1
   shift_rows_inv!(state)
   sub_bytes_inv!(state)
-  add_round_key!(state, key_block[:,:,i])
+  add_round_key!(state, key_block, i)
   state
 end
 
@@ -371,11 +363,11 @@ end
 function apply_ECB_mode!(cipher::Function, plain_text::Vector{Uint8}, key::Vector{Uint8})
   params = aes_get_cipher_params(key)
   key_block = gen_key_schedule(key, params)
-  key_block = reshape(key_block, 4, 4, int(params.nr + 1))
+  key_block = reshape(key_block, 4, 4, Int(params.nr + 1))
   pad_pkcs7!(plain_text, params.block_size)
 
   num_blocks::Unsigned = length(plain_text) / params.block_size
-  input = reshape(plain_text, int(params.block_y), int(params.block_x), int(num_blocks))
+  input = reshape(plain_text, Int(params.block_y), Int(params.block_x), Int(num_blocks))
   for k in 1:num_blocks
     input[:,:,k] = cipher(input[:,:,k], key_block, params)
   end
@@ -404,7 +396,7 @@ function test_rijndael()
   apply_ECB_mode!(rijndael_inverse, plaintext, key_256)
   @assert plaintext == hex2bytes("00112233445566778899aabbccddeeff")
 
-  print ("Rijndael tests PASSED")
+  print("Rijndael tests PASSED")
 end
 
 a = test_rijndael()
