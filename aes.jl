@@ -214,14 +214,9 @@ function sub_bytes_inv!(state::Array{Uint8})
 end
 
 function shift_rows!(state::Array{Uint8})
-  for i = 2:4
-    @inbounds (state[i, 1], state[i, 2], state[i, 3], state[i, 4]) = (
-      state[i, mod1(i, 4)],
-      state[i, mod1(i+1, 4)],
-      state[i, mod1(i+2, 4)],
-      state[i, mod1(i+3, 4)]
-    )
-  end
+  state[2, 1], state[2, 2], state[2, 3], state[2, 4] = (state[2, 2], state[2, 3], state[2, 4], state[2, 1])
+  state[3, 1], state[3, 2], state[3, 3], state[3, 4] = (state[3, 3], state[3, 4], state[3, 1], state[3, 2])
+  state[4, 1], state[4, 2], state[4, 3], state[4, 4] = (state[4, 4], state[4, 1], state[4, 2], state[4, 3])
 end
 
 function shift_rows_inv!(state::Array{Uint8})
